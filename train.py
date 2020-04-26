@@ -74,13 +74,13 @@ def create_training_instances(
 def create_callbacks(saved_weights_name, tensorboard_logs, model_to_save):
     makedirs(tensorboard_logs)
     
-    early_stop = EarlyStopping(
-        monitor     = 'loss', 
-        min_delta   = 0.01, 
-        patience    = 7, 
-        mode        = 'min', 
-        verbose     = 1
-    )
+    # early_stop = EarlyStopping(
+    #     monitor     = 'loss', 
+    #     min_delta   = 0.01, 
+    #     patience    = 7, 
+    #     mode        = 'min', 
+    #     verbose     = 1
+    # )
     checkpoint = CustomModelCheckpoint(
         model_to_save   = model_to_save,
         filepath        = saved_weights_name,# + '{epoch:02d}.h5', 
@@ -90,10 +90,11 @@ def create_callbacks(saved_weights_name, tensorboard_logs, model_to_save):
         mode            = 'min', 
         period          = 1
     )
+
     reduce_on_plateau = ReduceLROnPlateau(
         monitor  = 'loss',
         factor   = 0.1,
-        patience = 2,
+        patience = 4,
         verbose  = 1,
         mode     = 'min',
         epsilon  = 0.01,
@@ -105,7 +106,7 @@ def create_callbacks(saved_weights_name, tensorboard_logs, model_to_save):
         write_graph            = True,
         write_images           = True,
     )    
-    return [early_stop, checkpoint, reduce_on_plateau, tensorboard]
+    return [checkpoint, reduce_on_plateau, tensorboard]
 
 def create_model(
     nb_class, 
@@ -121,7 +122,8 @@ def create_model(
     obj_scale,
     noobj_scale,
     xywh_scale,
-    class_scale  
+    class_scale,
+    pretrained_weights  
 ):
     if multi_gpu > 1:
         with tf.device('/cpu:0'):
@@ -156,10 +158,14 @@ def create_model(
         )  
 
     # load the pretrained weight if exists, otherwise load the backend weight only
-    if os.path.exists(saved_weights_name): 
+    if os.path.exists(pretrained_weights):
         print("\nLoading pretrained weights.\n")
+        template_model.load_weights(pretrained_weights, by_name=True)
+    elif os.path.exists(saved_weights_name): 
+        print("\nLoading saved weights.\n")
         template_model.load_weights(saved_weights_name)
     else:
+        print("\nLoading default weights.\n")
         template_model.load_weights("backend.h5", by_name=True)       
 
     if multi_gpu > 1:
@@ -167,7 +173,8 @@ def create_model(
     else:
         train_model = template_model      
 
-    optimizer = Adam(lr=lr, clipnorm=0.001)
+      
+    optimizer = Adam(lr=1e-4, clipnorm=0.001)
     train_model.compile(loss=dummy_loss, optimizer=optimizer)             
 
     return train_model, infer_model
@@ -208,6 +215,8 @@ def _main_(args):
         jitter              = 0.3, 
         norm                = normalize
     )
+
+
     
     valid_generator = BatchGenerator(
         instances           = valid_ints, 
@@ -226,7 +235,7 @@ def _main_(args):
     ###############################
     #   Create the model 
     ###############################
-    if os.path.exists(config['train']['saved_weights_name']): 
+    if os.path.exists(config['train']['saved_weights_name']) or os.path.exists(config['train']['pretrained_weights']): 
         config['train']['warmup_epochs'] = 0
     warmup_batches = config['train']['warmup_epochs'] * (config['train']['train_times']*len(train_generator))   
 
@@ -249,12 +258,18 @@ def _main_(args):
         noobj_scale         = config['train']['noobj_scale'],
         xywh_scale          = config['train']['xywh_scale'],
         class_scale         = config['train']['class_scale'],
+        pretrained_weights  = config['train']['pretrained_weights']
     )
+
 
     ###############################
     #   Kick off the training
     ###############################
     callbacks = create_callbacks(config['train']['saved_weights_name'], config['train']['tensorboard_dir'], infer_model)
+
+    initial_epoch = 0
+    if config['train']['initial_epoch']:
+      initial_epoch = config['train']['initial_epoch']
 
     train_model.fit_generator(
         generator        = train_generator, 
@@ -262,9 +277,11 @@ def _main_(args):
         epochs           = config['train']['nb_epochs'] + config['train']['warmup_epochs'], 
         verbose          = 2 if config['train']['debug'] else 1,
         callbacks        = callbacks, 
+        initial_epoch    = initial_epoch,
         workers          = 4,
         max_queue_size   = 8
     )
+
 
     # make a GPU version of infer_model for evaluation
     if multi_gpu > 1:
