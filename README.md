@@ -35,7 +35,9 @@ There is a one-to-one correspondence by file name between images and annotations
 By the end of this process, the code will write the weights of the best model to file best_weights.h5 (or whatever name specified in the setting "saved_weights_name" in the config.json file).
 
 ### 4. Perform detection using trained weights on image, set of images, video, or webcam
-`python predict.py -c config.json -i /path/to/image/or/video`
+`python detect.py -c config.json -i /path/to/image/or/video`
+
+Config file must contain anchors, traffic light labels and model, traffic sign labels and model.
 
 It carries out detection on the image and write the image with detected bounding boxes to the same folder.
 
