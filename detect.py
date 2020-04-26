@@ -29,33 +29,17 @@ def _main_(args):
     ###############################
     #   Load the model
     ###############################
-    os.environ['CUDA_VISIBLE_DEVICES'] = config['train']['gpus']
-    infer_model = load_model(config['train']['saved_weights_name'])
+    # os.environ['CUDA_VISIBLE_DEVICES'] = config['train']['gpus']
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' # run on CPU
+
+    infer_model_ts = load_model(config['ts_model'])
+    infer_model_tf = load_model(config['tf_model'])
+
 
     ###############################
     #   Predict bounding boxes 
-    ###############################
-    if 'webcam' in input_path: # do detection on the first webcam
-        video_reader = cv2.VideoCapture(0)
-
-        # the main loop
-        batch_size  = 1
-        images      = []
-        while True:
-            ret_val, image = video_reader.read()
-            if ret_val == True: images += [image]
-
-            if (len(images)==batch_size) or (ret_val==False and len(images)>0):
-                batch_boxes = get_yolo_boxes(infer_model, images, net_h, net_w, config['model']['anchors'], obj_thresh, nms_thresh)
-
-                for i in range(len(images)):
-                    draw_boxes(images[i], batch_boxes[i], config['model']['labels'], obj_thresh) 
-                    cv2.imshow('video with bboxes', images[i])
-                images = []
-            if cv2.waitKey(1) == 27: 
-                break  # esc to quit
-        cv2.destroyAllWindows()        
-    elif input_path[-4:] == '.mp4': # do detection on a video  
+    ############################### 
+    if input_path[-4:] == '.avi': # do detection on a video  
         video_out = output_path + input_path.split('/')[-1]
         video_reader = cv2.VideoCapture(input_path)
 
@@ -64,35 +48,30 @@ def _main_(args):
         frame_w = int(video_reader.get(cv2.CAP_PROP_FRAME_WIDTH))
 
         video_writer = cv2.VideoWriter(video_out,
-                               cv2.VideoWriter_fourcc(*'MPEG'), 
-                               50.0, 
+                               cv2.VideoWriter_fourcc(*'DIVX'), 
+                               cv2.CAP_PROP_FRAME_COUNT, 
                                (frame_w, frame_h))
         # the main loop
-        batch_size  = 1
         images      = []
-        start_point = 0 #%
         show_window = False
         for i in tqdm(range(nb_frames)):
             _, image = video_reader.read()
 
-            if (float(i+1)/nb_frames) > start_point/100.:
-                images += [image]
+            images += [image]
 
-                if (i%batch_size == 0) or (i == (nb_frames-1) and len(images) > 0):
-                    # predict the bounding boxes
-                    batch_boxes = get_yolo_boxes(infer_model, images, net_h, net_w, config['model']['anchors'], obj_thresh, nms_thresh)
+            # predict the bounding boxes
+            batch_boxes_ts = get_yolo_boxes(infer_model_ts, images, net_h, net_w, config['anchors'], obj_thresh, nms_thresh)
+            batch_boxes_tf = get_yolo_boxes(infer_model_tf, images, net_h, net_w, config['anchors'], obj_thresh, nms_thresh)
 
-                    for i in range(len(images)):
-                        # draw bounding boxes on the image using labels
-                        draw_boxes(images[i], batch_boxes[i], config['model']['labels'], obj_thresh)   
+            for i in range(len(images)):
+                # draw bounding boxes on the image using labels
+                draw_boxes(images[i], batch_boxes_ts[i], config['ts_labels'], obj_thresh)   
+                draw_boxes(images[i], batch_boxes_tf[i], config['tf_labels'], obj_thresh)   
 
-                        # show the video with detection bounding boxes          
-                        if show_window: cv2.imshow('video with bboxes', images[i])  
-
-                        # write result to the output video
-                        video_writer.write(images[i]) 
-                    images = []
-                if show_window and cv2.waitKey(1) == 27: break  # esc to quit
+                # write result to the output video
+                video_writer.write(images[i]) 
+            images = []
+            if show_window and cv2.waitKey(1) == 27: break  # esc to quit
 
         if show_window: cv2.destroyAllWindows()
         video_reader.release()
@@ -111,16 +90,19 @@ def _main_(args):
         # the main loop
         for image_path in image_paths:
             image = cv2.imread(image_path)
-            print(image_path)
 
             # predict the bounding boxes
-            boxes = get_yolo_boxes(infer_model, [image], net_h, net_w, config['model']['anchors'], obj_thresh, nms_thresh)[0]
-
+            boxes = get_yolo_boxes(infer_model_ts, [image], net_h, net_w, config['anchors'], obj_thresh, nms_thresh)[0]
             # draw bounding boxes on the image using labels
-            draw_boxes(image, boxes, config['model']['labels'], obj_thresh) 
-     
+            draw_boxes(image, boxes, config['ts_labels'], obj_thresh) 
+
+            # predict the bounding boxes
+            boxes = get_yolo_boxes(infer_model_tf, [image], net_h, net_w, config['anchors'], obj_thresh, nms_thresh)[0]
+            # draw bounding boxes on the image using labels
+            draw_boxes(image, boxes, config['tf_labels'], obj_thresh)
+
             # write the image with bounding boxes to file
-            cv2.imwrite(output_path + image_path.split('/')[-1], np.uint8(image))         
+            cv2.imwrite(output_path + image_path.split('\\')[-1], np.uint8(image))         
 
 if __name__ == '__main__':
     argparser = argparse.ArgumentParser(description='Predict with a trained yolo model')
